@@ -243,32 +243,23 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
-// ===== Photo Upload Functionality with Firebase =====
+// ===== Photo Upload Functionality =====
 let uploadedPhotos = [];
-let unsubscribePhotos = null;
 
-// Load photos from Firebase Firestore on page load
-function loadPhotosFromFirebase() {
-    // Real-time listener for photos
-    unsubscribePhotos = photosCollection.orderBy('uploadedAt', 'desc').onSnapshot((snapshot) => {
-        // Clear existing photos
-        const photoGrid = document.getElementById('photoGrid');
-        photoGrid.innerHTML = '';
-        uploadedPhotos = [];
-
-        // Display each photo
-        snapshot.forEach((doc) => {
-            const photoData = {
-                id: doc.id,
-                ...doc.data()
-            };
-            uploadedPhotos.push(photoData);
+// Load photos from localStorage on page load
+function loadPhotosFromStorage() {
+    const savedPhotos = localStorage.getItem('loveWebsitePhotos');
+    if (savedPhotos) {
+        uploadedPhotos = JSON.parse(savedPhotos);
+        uploadedPhotos.forEach(photoData => {
             displayPhoto(photoData);
         });
-    }, (error) => {
-        console.error('Error loading photos:', error);
-        alert('Failed to load photos. Please refresh the page.');
-    });
+    }
+}
+
+// Save photos to localStorage
+function savePhotosToStorage() {
+    localStorage.setItem('loveWebsitePhotos', JSON.stringify(uploadedPhotos));
 }
 
 // Display a photo in the grid
@@ -280,7 +271,7 @@ function displayPhoto(photoData) {
     photoItem.dataset.photoId = photoData.id;
 
     const img = document.createElement('img');
-    img.src = photoData.url;
+    img.src = photoData.data;
     img.alt = 'Precious memory';
 
     const overlay = document.createElement('div');
@@ -292,7 +283,7 @@ function displayPhoto(photoData) {
     deleteBtn.setAttribute('aria-label', 'Delete photo');
     deleteBtn.onclick = (e) => {
         e.stopPropagation();
-        deletePhoto(photoData.id, photoData.storagePath);
+        deletePhoto(photoData.id);
     };
 
     overlay.appendChild(deleteBtn);
@@ -302,29 +293,26 @@ function displayPhoto(photoData) {
 
     // Add click to view full size
     photoItem.addEventListener('click', () => {
-        viewPhotoFullSize(photoData.url);
+        viewPhotoFullSize(photoData.data);
     });
 }
 
-// Delete a photo from Firebase
-async function deletePhoto(photoId, storagePath) {
-    if (!confirm('Are you sure you want to delete this photo?')) {
-        return;
+// Delete a photo
+function deletePhoto(photoId) {
+    // Remove from array
+    uploadedPhotos = uploadedPhotos.filter(photo => photo.id !== photoId);
+
+    // Remove from DOM
+    const photoItem = document.querySelector(`[data-photo-id="${photoId}"]`);
+    if (photoItem) {
+        photoItem.style.animation = 'fadeOutScale 0.3s ease-out';
+        setTimeout(() => {
+            photoItem.remove();
+        }, 300);
     }
 
-    try {
-        // Delete from Storage
-        const storageRef = storage.ref(storagePath);
-        await storageRef.delete();
-
-        // Delete from Firestore
-        await photosCollection.doc(photoId).delete();
-
-        console.log('Photo deleted successfully');
-    } catch (error) {
-        console.error('Error deleting photo:', error);
-        alert('Failed to delete photo. Please try again.');
-    }
+    // Update localStorage
+    savePhotosToStorage();
 }
 
 // View photo in full size
@@ -367,81 +355,42 @@ function viewPhotoFullSize(photoSrc) {
     });
 }
 
-// Handle file selection and upload to Firebase
-async function handleFiles(files) {
+// Handle file selection
+function handleFiles(files) {
     const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
     const maxSize = 5 * 1024 * 1024; // 5MB
 
-    for (const file of files) {
+    Array.from(files).forEach(file => {
         // Validate file type
         if (!validTypes.includes(file.type)) {
             alert(`${file.name} is not a valid image format. Please use JPG, PNG, GIF, or WebP.`);
-            continue;
+            return;
         }
 
         // Validate file size
         if (file.size > maxSize) {
             alert(`${file.name} is too large. Please use images under 5MB.`);
-            continue;
+            return;
         }
 
-        // Upload to Firebase
-        await uploadPhotoToFirebase(file);
-    }
-}
+        // Read and display the file
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const photoData = {
+                id: Date.now() + Math.random(),
+                data: e.target.result,
+                name: file.name
+            };
 
-// Upload photo to Firebase Storage and save metadata to Firestore
-async function uploadPhotoToFirebase(file) {
-    try {
-        // Show loading state
-        const uploadArea = document.getElementById('uploadArea');
-        const originalContent = uploadArea.innerHTML;
-        uploadArea.innerHTML = `
-            <div class="upload-content">
-                <div class="loading-spinner"></div>
-                <p style="color: var(--soft-pink); margin-top: 1rem;">Uploading ${file.name}...</p>
-            </div>
-        `;
+            uploadedPhotos.push(photoData);
+            displayPhoto(photoData);
+            savePhotosToStorage();
 
-        // Create unique filename
-        const timestamp = Date.now();
-        const filename = `${timestamp}_${file.name}`;
-        const storagePath = `photos/${filename}`;
-
-        // Upload to Firebase Storage
-        const storageRef = storage.ref(storagePath);
-        const uploadTask = storageRef.put(file);
-
-        // Wait for upload to complete
-        await uploadTask;
-
-        // Get download URL
-        const downloadURL = await storageRef.getDownloadURL();
-
-        // Save metadata to Firestore
-        await photosCollection.add({
-            url: downloadURL,
-            storagePath: storagePath,
-            filename: file.name,
-            uploadedAt: firebase.firestore.FieldValue.serverTimestamp(),
-            size: file.size
-        });
-
-        // Restore upload area
-        uploadArea.innerHTML = originalContent;
-
-        // Create sparkle effect
-        createSparkle(window.innerWidth / 2, window.innerHeight / 2);
-
-        console.log('Photo uploaded successfully');
-    } catch (error) {
-        console.error('Error uploading photo:', error);
-        alert('Failed to upload photo. Please try again.');
-
-        // Restore upload area on error
-        const uploadArea = document.getElementById('uploadArea');
-        location.reload(); // Simple way to restore UI
-    }
+            // Create sparkle effect
+            createSparkle(window.innerWidth / 2, window.innerHeight / 2);
+        };
+        reader.readAsDataURL(file);
+    });
 }
 
 // Initialize upload functionality
@@ -450,8 +399,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const uploadButton = document.getElementById('uploadButton');
     const photoInput = document.getElementById('photoInput');
 
-    // Load photos from Firebase
-    loadPhotosFromFirebase();
+    // Load saved photos
+    loadPhotosFromStorage();
 
     // Click to upload
     uploadButton.addEventListener('click', (e) => {
@@ -491,7 +440,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
-// Add CSS animations for modal and loading
+// Add CSS animations for modal
 const style = document.createElement('style');
 style.textContent = `
     @keyframes fadeIn {
@@ -509,19 +458,6 @@ style.textContent = `
     @keyframes fadeOutScale {
         from { opacity: 1; transform: scale(1); }
         to { opacity: 0; transform: scale(0.8); }
-    }
-    @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-    }
-    .loading-spinner {
-        border: 4px solid rgba(255, 107, 157, 0.2);
-        border-top: 4px solid var(--rose-pink);
-        border-radius: 50%;
-        width: 50px;
-        height: 50px;
-        animation: spin 1s linear infinite;
-        margin: 0 auto;
     }
 `;
 document.head.appendChild(style);
